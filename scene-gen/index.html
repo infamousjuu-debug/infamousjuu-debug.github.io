@@ -59,6 +59,7 @@ audio{width:100%;margin-bottom:10px}
 a.dl{border-color:var(--accent2)}
 .meta{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.4}
 pre{white-space:pre-wrap;font-size:12px;color:var(--dim);line-height:1.5;margin:0 0 12px}
+button.enh{margin-top:8px;border-color:#7a5cff;background:linear-gradient(180deg,#2a2150,#1a1530);font-weight:600}
 .syn{font-size:12px;color:var(--dim);line-height:1.6}
 .syn code{color:var(--text)}
 </style>
@@ -79,11 +80,15 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--dim);line-height:1.5;margin:
   <button type="button" class="small" id="example">Load example</button>
   <button type="button" class="small" id="check">Check script (free)</button>
 </div>
+<input type="text" id="direction" placeholder="Optional direction for Enhance, e.g. more emotional, add rain, no whispering" autocorrect="off" style="margin-top:10px">
+<button type="button" class="small enh" id="enhance">✦ Enhance with Claude</button>
+<button type="button" class="small" id="undoenh" style="display:none;margin-top:8px">Undo enhance</button>
 
 <label>Background music</label>
 <button type="button" class="small" id="pickmusic">Upload music (MP3 / M4A / WAV)</button>
 <input type="file" id="music" accept="audio/*,.mp3,.m4a,.wav" multiple hidden>
 <div class="file" id="musicinfo">No music uploaded.</div>
+<label class="chk"><input type="checkbox" id="automusic" checked> Play it under the whole scene when the script has no [MUSIC] cues</label>
 
 <details>
 <summary>Settings, voices &amp; script syntax</summary>
@@ -96,7 +101,13 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--dim);line-height:1.5;margin:
 </div>
 <div class="file" id="vstat" style="margin-bottom:10px"></div>
 <label for="model">Dialogue model</label>
-<input type="text" id="model" value="eleven_v3">
+<select id="model"><option value="eleven_v4" selected>Eleven v4 (best, recommended)</option><option value="eleven_v3">Eleven v3</option></select>
+<label for="ckey">Claude API key (for Enhance)</label>
+<input id="ckey" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-...">
+<label class="chk"><input type="checkbox" id="cremember"> Remember Claude key on this device</label>
+<div class="warn">Get one at console.anthropic.com → API keys. It's billed per use by Anthropic, separately from a Claude app subscription.</div>
+<label for="cmodel">Claude model for Enhance</label>
+<select id="cmodel"><option value="claude-sonnet-5-5" selected>Claude Sonnet 5.5 (recommended)</option><option value="claude-opus-5-5">Claude Opus 5.5 (best writing, slower)</option><option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest, cheapest)</option></select>
 <label for="stab">Dialogue stability</label>
 <select id="stab"><option value="">Default</option><option value="0">Creative (0.0)</option><option value="0.5">Natural (0.5)</option><option value="1">Robust (1.0)</option></select>
 <label for="gap">Gap between spoken turns (seconds)</label>
@@ -124,7 +135,7 @@ pre{white-space:pre-wrap;font-size:12px;color:var(--dim);line-height:1.5;margin:
 <code>[SFX: prompt | duration=4s | volume=-18dB | offset=-1s]</code> one-shot, starts now and plays <i>under</i> the next line.<br>
 <code>[SFX START: prompt | volume=-24dB | fadein=2s | duration=20s]</code> looping ambience until stopped. <code>duration</code> is the length of the generated loop (default 20s).<br>
 <code>[SFX STOP: rain | fadeout=2s]</code> stops matching ambience.<br>
-<code>[MUSIC START: file.mp3 | volume=-25dB | fadein=3s | start=30s]</code> (<code>start</code> skips into the track) <code>[MUSIC STOP]</code> <code>[MUSIC FADEOUT: 5s]</code> <code>[MUSIC SWELL: +6dB | duration=4s]</code> <code>[MUSIC DUCK: -8dB | duration=3s]</code><br>
+<code>[MUSIC START: file.mp3 | volume=-12dB | fadein=3s | start=30s]</code> (volume is relative to the voices; <code>start</code> skips into the track; a quiet intro is skipped automatically) <code>[MUSIC STOP]</code> <code>[MUSIC FADEOUT: 5s]</code> <code>[MUSIC SWELL: +6dB | duration=4s]</code> <code>[MUSIC DUCK: -8dB | duration=3s]</code><br>
 <code>ALVAREZ (whispering): ...</code> turns the parenthetical into a <code>[whispering]</code> tag. Lines starting with <code>#</code> or <code>//</code> are ignored. Music loops automatically. Character names are case-insensitive, and "DR. ALVAREZ:" also works.
 </div>
 </details>
@@ -581,9 +592,14 @@ $("loadv").onclick=function(){loadVoices(false)};
 $("addv").onclick=function(){voices.push({name:"",id:""});renderVoices()};
 renderVoices();
 if(voiceList.length)$("vstat").textContent=voiceList.length+" voices available.";
-["model","stab","gap","duck","mtrim","strim","kbps"].forEach(function(k){
+if(ls("set_model")!=="eleven_v4"&&!ls("v4_migrated")){ls("set_model","eleven_v4");ls("v4_migrated","1")}
+["model","stab","gap","duck","mtrim","strim","kbps","cmodel"].forEach(function(k){
   var e=$(k),s=ls("set_"+k);if(s!==null)e.value=s;e.onchange=function(){ls("set_"+k,e.value)};
 });
+(function(){var a=ls("set_automusic");if(a!==null)$("automusic").checked=a==="1";$("automusic").onchange=function(){ls("set_automusic",this.checked?"1":"0")}})();
+var savedCKey=ls("claude_key");if(savedCKey){$("ckey").value=savedCKey;$("cremember").checked=true}
+$("cremember").onchange=function(){var k=$("ckey").value.trim();if(!this.checked)ls("claude_key",null);else if(k)ls("claude_key",k)};
+$("ckey").oninput=function(){if($("cremember").checked)ls("claude_key",this.value.trim())};
 $("remember").onchange=function(){var k=$("key").value.trim();if(!this.checked)ls("el_key",null);else if(k)ls("el_key",k)};
 var savedKey=ls("el_key");
 if(savedKey){$("key").value=savedKey;$("remember").checked=true}
@@ -696,7 +712,7 @@ function buildCmd(cmd,arg,line,errors){
       if(!main){errors.push("Line "+line+": [SFX STOP] needs the name of the sound to stop, like [SFX STOP: rain]");return null}
       return {type:"sfxstop",match:main,fadeout:num(get("fadeout"),null),line:line};
     case "MUSIC START":
-      return {type:"music",op:"start",file:main,vol:num(get("volume","vol"),null),fadein:num(get("fadein"),null),skip:num(get("start","from","skipto"),0),line:line};
+      return {type:"music",op:"start",file:main,vol:num(get("volume","vol"),null),fadein:num(get("fadein"),null),skip:num(get("start","from","skipto"),null),line:line};
     case "MUSIC STOP":
       return {type:"music",op:"stop",fadeout:num(get("fadeout"),num(main,null)),line:line};
     case "MUSIC FADEOUT":
@@ -1045,14 +1061,27 @@ function buildTimeline(steps,assets,o){
           if(!f){warn.push("Line "+s.line+": no music file available for '"+s.file+"'.");break}
           var wasPlaying=!!music;
           if(music)endMusic(t,1.5);
-          var g3=dbG((s.vol==null?-22:s.vol)+o.musicTrim),fi3=s.fadein==null?(wasPlaying?1.5:0.05):Math.max(0.05,s.fadein);
+          var g3=dbG((s.vol==null?-10:s.vol)+o.musicTrim),fi3=s.fadein==null?(wasPlaying?1.5:0.05):Math.max(0.05,s.fadein);
           var buf=assets.music[f.name];
-          if(s.skip>0){
-            if(buf.L.length>Math.round((s.skip+2)*SR)){var sk=Math.round(s.skip*SR);buf={L:buf.L.subarray(sk),R:buf.R===buf.L?buf.L.subarray(sk):buf.R.subarray(sk)}}
-            else warn.push("Line "+s.line+": start="+s.skip+"s is past the end of "+f.name+" ("+(buf.L.length/SR).toFixed(0)+"s); playing from the beginning.");
+          var skipSec=s.skip;
+          if(skipSec==null){ // no start= given: skip a quiet intro so the music is actually audible
+            var W=Math.round(0.5*SR),tot=0,nw=Math.floor(buf.L.length/W),k2,e2,thr2;
+            for(k2=0;k2<buf.L.length;k2+=97)tot+=buf.L[k2]*buf.L[k2];
+            thr2=Math.sqrt(tot/Math.ceil(buf.L.length/97))*0.3;skipSec=0;
+            for(var w2=0;w2<Math.min(nw,90);w2++){e2=0;for(k2=w2*W;k2<(w2+1)*W;k2+=7)e2+=buf.L[k2]*buf.L[k2];if(Math.sqrt(e2/(W/7))>=thr2){skipSec=w2*0.5;break}}
+            if(skipSec>0)L(t,"(music: skipping "+skipSec.toFixed(1)+"s quiet intro)");
           }
+          if(skipSec>0){
+            if(buf.L.length>Math.round((skipSec+2)*SR)){var sk=Math.round(skipSec*SR);buf={L:buf.L.subarray(sk),R:buf.R===buf.L?buf.L.subarray(sk):buf.R.subarray(sk)}}
+            else warn.push("Line "+s.line+": start="+skipSec+"s is past the end of "+f.name+" ("+(buf.L.length/SR).toFixed(0)+"s); playing from the beginning.");
+          }
+          // level the music by the part that will actually play, not the whole track (quiet first minutes made it inaudible)
+          var segN=Math.min(buf.L.length,Math.round(60*SR)),eSeg=0,cS=0;
+          for(var kk=0;kk<segN;kk+=13){eSeg+=buf.L[kk]*buf.L[kk]+buf.R[kk]*buf.R[kk];cS+=2}
+          var segR=cS?Math.sqrt(eSeg/cS):0;
+          if(segR>1e-5)g3*=Math.min(4,Math.max(0.25,dbG(REF_LAYER_DB)/segR));
           music={start:t,end:null,L:buf.L,R:buf.R,loop:true,xf:Math.min(Math.round(2*SR),buf.L.length>>2),swells:[],points:[[t,0],[t+fi3,g3]]};
-          musicSegs.push(music);L(t,"MUSIC START "+f.name+" ("+(s.vol==null?-22:s.vol)+" dB, fade-in "+fi3.toFixed(1)+"s)");
+          musicSegs.push(music);L(t,"MUSIC START "+f.name+" ("+(s.vol==null?-10:s.vol)+" dB, fade-in "+fi3.toFixed(1)+"s)");
         }else if(!music){warn.push("Line "+s.line+": music command with no music playing; ignored.")}
         else if(s.op==="stop"){var fo3=s.fadeout==null?0.5:s.fadeout;L(t,"MUSIC STOP");endMusic(t,fo3)}
         else if(s.op==="fadeout"){L(t,"MUSIC FADEOUT "+s.dur+"s");endMusic(t,Math.max(0.05,s.dur))}
@@ -1198,7 +1227,7 @@ function readSettings(){
     musicTrim:num($("mtrim").value,0),
     sfxTrim:num($("strim").value,0),
     kbps:parseInt($("kbps").value,10)||192,
-    model:$("model").value.trim()||"eleven_v3",
+    model:$("model").value||"eleven_v4",
     stab:$("stab").value
   };
 }
@@ -1210,7 +1239,11 @@ function analyse(){
   var dl=steps.filter(function(s){return s.type==="dlg"});
   var chars=dl.reduce(function(a,s){return a+s.chars},0);
   var sp=sfxSpecs(steps),spN=Object.keys(sp).length;
-  var needsMusic=steps.some(function(s){return s.type==="music"&&s.op==="start"});
+  var needsMusic=steps.some(function(s){return s.type==="music"&&s.op==="start"}),autoMusic=false;
+  if(!needsMusic&&musicFiles.length&&$("automusic").checked&&!steps.some(function(s){return s.type==="music"})){
+    steps.unshift({type:"music",op:"start",file:musicFiles[0].name,vol:null,fadein:2,skip:null,line:0,auto:true});
+    needsMusic=true;autoMusic=true;
+  }
   if(!src.trim())errors.push("Paste a screenplay first.");
   else if(!turns)errors.push("No dialogue found. Lines must start with a character name and a colon, like:\n"+voices.filter(function(v){return v.name.trim()&&v.id.trim()}).map(function(v){return v.name+": ..."}).join("\n"));
   var pauseSum=pr.events.filter(function(e){return e.type==="pause"}).reduce(function(a,e){return a+e.sec},0),est=chars/10+pauseSum;
@@ -1221,7 +1254,7 @@ function analyse(){
     errors.push("Pick a voice for "+pr.unknown.join(", ")+" under Settings → Character voices (I added "+(pr.unknown.length===1?"it":"them")+" for you), then tap Generate again.");
   }
   if(needsMusic&&!musicFiles.length)errors.push("The script has [MUSIC START] but no music file is uploaded. Tap \"Upload music\" first.");
-  return {pr:pr,steps:steps,turns:turns,dl:dl,chars:chars,sfx:sp,sfxN:spN,errors:errors,needsMusic:needsMusic,est:est};
+  return {pr:pr,steps:steps,turns:turns,dl:dl,chars:chars,sfx:sp,sfxN:spN,errors:errors,needsMusic:needsMusic,autoMusic:autoMusic,est:est};
 }
 $("check").onclick=function(){
   clearErr();
@@ -1229,7 +1262,7 @@ $("check").onclick=function(){
   if(a.errors.length)showErr(a.errors.join("\n"));
   var lines=[a.turns+" spoken turns in "+a.dl.length+" dialogue request"+(a.dl.length===1?"":"s")+" ("+a.chars+" characters).",
     a.sfxN+" distinct sound effect"+(a.sfxN===1?"":"s")+" (cached ones are free).",
-    a.needsMusic?"Music: "+(musicFiles.length?musicFiles[0].name+(musicFiles.length>1?" +"+(musicFiles.length-1)+" more":""):"MISSING"):"No music cues."];
+    a.autoMusic?"Music: "+musicFiles[0].name+" plays under the whole scene (no [MUSIC] cues in the script).":a.needsMusic?"Music: "+(musicFiles.length?musicFiles[0].name+(musicFiles.length>1?" +"+(musicFiles.length-1)+" more":""):"MISSING"):"No music cues."];
   if(a.pr.warnings.length)lines.push("Warnings:\n"+a.pr.warnings.join("\n"));
   showInfo(lines.join("\n"));
 };
@@ -1388,6 +1421,63 @@ $("share").onclick=async function(){
 };
 if(IS_IOS&&!IS_STANDALONE&&/^https?:$/.test(location.protocol)&&!ls("install_dismissed"))$("install").className="install show";
 $("installx").onclick=function(){$("install").className="install";ls("install_dismissed","1")};
+var ENH_SYSTEM=[
+"You are the script editor and sound designer for an audio-drama generator. Rewrite the user's text into a script in the generator's format, keeping the story, meaning and speakers. Output ONLY the finished script: no commentary, headings, markdown or code fences.",
+"",
+"FORMAT",
+"- Spoken line: NAME: [delivery tag] words. One speaker per line, every spoken line starts with NAME: . Use the character names provided, spelled exactly. If the text has no speaker labels, assign fitting names from the list, or invent a short UPPERCASE name if none fit.",
+"- Delivery tags are square brackets inside a spoken line, e.g. [menacing], [laughs], [sighs], [shouting], [voice breaking], [coughs], [crying], [nervous]. Usually one tag per line, never more than two in a row. Do not use [whispers] or [whispering] unless the user's text or direction asks for it.",
+"- [PAUSE: seconds] is real silence. Put a pause after a big sound effect so it can be heard before the next line.",
+"- [SFX: description | duration=Ns | volume=-NdB] is a one-shot sound starting at that point; it plays under whatever comes next. Always give duration (0.5 to 30) and volume.",
+"- [SFX START: description | volume=-NdB | fadein=Ns] starts looping background ambience. [SFX STOP: a few words from that description | fadeout=Ns] stops it. Stop every ambience by the end.",
+"- Music commands, only when music is available: [MUSIC START: file | volume=-NdB | fadein=Ns], [MUSIC SWELL: +NdB | duration=Ns], [MUSIC FADEOUT: Ns].",
+"",
+"LEVELS (relative to the voices): ambience beds -26 to -34 dB; quiet foley -18 to -24 dB; big impacts, explosions, collapses -8 to -12 dB; music bed -10 to -16 dB.",
+"SOUND DESCRIPTIONS: concrete and physical (what makes the sound, where, how near or far), 4 to 14 words, no character names.",
+"",
+"RULES",
+"- Read the situation (setting, mood, stakes, what is physically happening) and design sound that fits it: open with a fitting ambience, add effects at the moments the text implies, give big moments room with pauses.",
+"- Keep the user's words. Only tighten clumsy lines or add short reactions when it clearly helps, unless the direction asks for rewriting.",
+"- Follow the user's direction when given; it overrides these defaults.",
+"- If music is available and the script has a natural start and end, add MUSIC START near the start and MUSIC FADEOUT at the end.",
+"- Never write lines starting with # or //, and never put a command inside a spoken line except a short [PAUSE]."
+].join("\n");
+var preEnhance=null;
+async function enhanceScript(){
+  var key=$("ckey").value.trim(),src=$("script").value.trim();
+  if(!src){showErr("Type or paste something to enhance first.");return}
+  if(!key){var dt=document.querySelector("details");if(dt)dt.open=true;$("ckey").focus();showErr("Add your Claude API key in Settings first (console.anthropic.com → API keys).");return}
+  if($("cremember").checked)ls("claude_key",key);
+  var names=voices.filter(function(v){return (v.name||"").trim()}).map(function(v){var info=voiceList.filter(function(q){return q.id===v.id})[0];return v.name.trim()+(info?" (voice: "+shortName(info.name)+")":"")});
+  var user="Characters available: "+(names.join(", ")||"none set")+"\nMusic available: "+(musicFiles.length?"yes ("+musicFiles.map(function(m){return m.name}).join(", ")+")":"no")+"\nDirection: "+($("direction").value.trim()||"none")+"\n\nTEXT TO ENHANCE:\n<<<\n"+src+"\n>>>";
+  var btn=$("enhance");btn.disabled=true;btn.textContent="✦ Enhancing... (can take up to a minute)";clearErr();
+  try{
+    var res,txt="",body={model:$("cmodel").value||"claude-sonnet-5-5",max_tokens:8000,system:ENH_SYSTEM,messages:[{role:"user",content:user}]};
+    for(var attempt=0;attempt<3;attempt++){
+      try{res=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"x-api-key":key,"anthropic-version":"2023-06-01","content-type":"application/json","anthropic-dangerous-direct-browser-access":"true"},body:JSON.stringify(body)})}
+      catch(e){throw new Error("Couldn't reach Claude. Check your connection.\n("+e.message+")")}
+      if((res.status===429||res.status===529||res.status>=500)&&attempt<2){btn.textContent="✦ Claude is busy, retrying...";await sleep(3000*(attempt+1));continue}
+      break;
+    }
+    txt=await res.text();var j=null;try{j=JSON.parse(txt)}catch(e){}
+    if(!res.ok){
+      var msg=(j&&j.error&&j.error.message)||txt;
+      if(res.status===401)throw new Error("Claude rejected the API key (401). Check it in Settings.\n"+msg);
+      if(/credit balance/i.test(msg))throw new Error("Your Anthropic account is out of API credits. Add credits at console.anthropic.com → Billing.\n"+msg);
+      throw new Error("Claude error "+res.status+".\n"+msg);
+    }
+    var out=((j&&j.content)||[]).filter(function(c){return c.type==="text"}).map(function(c){return c.text}).join("").trim();
+    out=out.replace(/^```[a-z]*\s*\n?/i,"").replace(/\n?```\s*$/,"").trim();
+    if(!out)throw new Error("Claude returned an empty script. Try again.");
+    preEnhance=$("script").value;$("script").value=out;ls("draft",out);
+    $("undoenh").style.display="block";
+    var a=analyse();
+    showInfo("Enhanced. "+a.turns+" spoken lines, "+a.sfxN+" sound effects. Listen-check it with Generate, or tap Undo enhance."+(a.errors.length?"\n"+a.errors.join("\n"):""));
+  }catch(e){showErr(e.message||String(e))}
+  finally{btn.disabled=false;btn.textContent="✦ Enhance with Claude"}
+}
+$("enhance").onclick=enhanceScript;
+$("undoenh").onclick=function(){if(preEnhance==null)return;$("script").value=preEnhance;ls("draft",preEnhance);preEnhance=null;this.style.display="none";showInfo("Restored your text from before Enhance.")};
 function bump(k,msg){ls(k,String(takeNo(k)+1));showInfo(msg)}
 $("newdlg").onclick=function(){bump("take_dlg","The next run will record new voice takes (uses credits). Sound effects stay cached.")};
 $("newsfx").onclick=function(){bump("take_sfx","The next run will generate new sound effects (uses credits). Voices stay cached.")};
