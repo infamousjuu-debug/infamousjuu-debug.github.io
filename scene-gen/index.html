@@ -100,6 +100,16 @@ button.enh{margin-top:8px;border-color:#7a5cff;background:linear-gradient(180deg
   <button type="button" class="small" id="loadv">Load my voices</button>
 </div>
 <div class="file" id="vstat" style="margin-bottom:10px"></div>
+<label>Clone a voice from audio</label>
+<div class="warn" style="margin:0 0 8px">Upload recordings of ONE person speaking (MP3, M4A or WAV). About a minute or more of clean speech works best; music or other voices in the background make it worse. Only clone a voice you have the right to use.</div>
+<input type="text" id="clname" placeholder="Name for the new voice, e.g. Old Man" autocorrect="off">
+<button type="button" class="small" id="clpick" style="margin-top:8px">Choose audio files</button>
+<input type="file" id="clfiles" accept="audio/*,.mp3,.m4a,.wav" multiple hidden>
+<div class="file" id="clinfo">No files chosen.</div>
+<label class="chk"><input type="checkbox" id="clnoise"> Remove background noise from the samples</label>
+<label class="chk"><input type="checkbox" id="clconsent"> This is my voice, or I have the speaker's permission to clone it</label>
+<button type="button" class="small" id="clgo" style="margin-top:8px">Create voice</button>
+<div class="file" id="clstat" style="margin-bottom:10px"></div>
 <label for="model">Dialogue model</label>
 <select id="model"><option value="eleven_v4" selected>Eleven v4 (best, recommended)</option><option value="eleven_v3">Eleven v3</option></select>
 <label for="ckey">Claude API key (for Enhance)</label>
@@ -589,6 +599,46 @@ async function loadVoices(silent){
   }catch(e){$("vstat").textContent="Could not load voices: "+e.message}
 }
 $("loadv").onclick=function(){loadVoices(false)};
+/* ---- instant voice clone ---- */
+var cloneFiles=[];
+$("clpick").onclick=function(){$("clfiles").click()};
+$("clfiles").onchange=function(){
+  cloneFiles=Array.prototype.slice.call(this.files||[]).slice(0,25);this.value="";
+  var mb=cloneFiles.reduce(function(a,f){return a+f.size},0)/1048576;
+  $("clinfo").textContent=cloneFiles.length?cloneFiles.length+" file"+(cloneFiles.length===1?"":"s")+" ("+mb.toFixed(1)+" MB): "+cloneFiles.map(function(f){return f.name}).join(", "):"No files chosen.";
+};
+$("clgo").onclick=async function(){
+  var key=$("key").value.trim(),nm=$("clname").value.trim(),st=$("clstat"),btn=this;
+  if(!key){st.textContent="Enter your ElevenLabs API key at the top first.";return}
+  if(!nm){st.textContent="Give the new voice a name.";$("clname").focus();return}
+  if(!cloneFiles.length){st.textContent="Choose at least one audio file of the voice.";return}
+  if(!$("clconsent").checked){st.textContent="Tick the permission box first: only clone a voice you have the right to use.";return}
+  var total=cloneFiles.reduce(function(a,f){return a+f.size},0);
+  if(total>100*1048576){st.textContent="Those files add up to more than 100 MB. Use shorter clips.";return}
+  var fd=new FormData();fd.append("name",nm);fd.append("description","Created in Scene Gen");
+  fd.append("remove_background_noise",$("clnoise").checked?"true":"false");
+  cloneFiles.forEach(function(f){fd.append("files",f,f.name)});
+  btn.disabled=true;st.textContent="Uploading and cloning... this can take a minute.";
+  try{
+    var res;try{res=await fetch("https://api.elevenlabs.io/v1/voices/add",{method:"POST",headers:{"xi-api-key":key},body:fd})}
+    catch(e){throw new Error("Couldn't reach ElevenLabs. Check your connection.\n("+e.message+")")}
+    var txt=await res.text(),j=null;try{j=JSON.parse(txt)}catch(e){}
+    if(!res.ok){
+      var raw=txt||"";
+      if(/can_not_use_instant_voice_cloning|instant voice cloning|subscription/i.test(raw))throw new Error("Your ElevenLabs plan doesn't include voice cloning (Starter or higher is needed).\n"+raw.slice(0,300));
+      if(/voice_limit_reached|maximum amount of custom voices|voice limit/i.test(raw))throw new Error("Your account has hit its custom voice limit. Delete an old voice in ElevenLabs → My Voices, then try again.\n"+raw.slice(0,300));
+      throw new Error(explain(res.status,raw));
+    }
+    var vid=j&&j.voice_id;if(!vid)throw new Error("ElevenLabs didn't return a voice ID. Try again.");
+    var label=nm.toUpperCase().replace(/[^A-Z0-9 ]/g,"").trim()||"VOICE";
+    var row=voices.filter(function(v){return (v.name||"").trim().toUpperCase()===label})[0];
+    if(row)row.id=vid;else voices.push({name:label,id:vid});
+    saveVoices();await loadVoices(true);renderVoices();
+    st.textContent="Created \""+nm+"\". It's now the character "+label+": start lines with "+label+": in your script."+(j.requires_verification?" ElevenLabs says this voice needs verification first: check My Voices on elevenlabs.io.":"");
+    cloneFiles=[];$("clinfo").textContent="No files chosen.";$("clname").value="";
+  }catch(e){st.textContent=e.message||String(e)}
+  finally{btn.disabled=false}
+};
 $("addv").onclick=function(){voices.push({name:"",id:""});renderVoices()};
 renderVoices();
 if(voiceList.length)$("vstat").textContent=voiceList.length+" voices available.";
