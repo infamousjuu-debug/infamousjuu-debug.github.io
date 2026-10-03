@@ -60,6 +60,12 @@ a.dl{border-color:var(--accent2)}
 .meta{color:var(--dim);font-size:12px;margin-top:8px;line-height:1.4}
 pre{white-space:pre-wrap;font-size:12px;color:var(--dim);line-height:1.5;margin:0 0 12px}
 button.enh{margin-top:8px;border-color:#7a5cff;background:linear-gradient(180deg,#2a2150,#1a1530);font-weight:600}
+.lib{display:flex;gap:8px;margin-top:6px}
+.lib input{flex:1}.lib button,.lib select{width:auto;flex:0 0 auto;padding:10px 12px;font-size:14px}
+.vres{border:1px solid var(--line);border-radius:12px;padding:10px;margin-top:8px;background:#100e15}
+.vres b{font-size:15px}.vres .d{font-size:12px;color:var(--dim);margin:4px 0 8px;line-height:1.4}
+.vres .acts{display:flex;gap:8px}.vres .acts button{width:auto;flex:1;padding:9px;font-size:14px}
+.vres .acts button.use{border-color:var(--accent2)}
 .syn{font-size:12px;color:var(--dim);line-height:1.6}
 .syn code{color:var(--text)}
 </style>
@@ -100,6 +106,12 @@ button.enh{margin-top:8px;border-color:#7a5cff;background:linear-gradient(180deg
   <button type="button" class="small" id="loadv">Load my voices</button>
 </div>
 <div class="file" id="vstat" style="margin-bottom:10px"></div>
+<label>Find voices in the ElevenLabs Voice Library</label>
+<div class="warn" style="margin:0 0 4px">Thousands of voices creators have shared for anyone to use. Search, tap ▶ to listen, then Use to add it to your account and a character.</div>
+<div class="lib"><input type="text" id="libq" placeholder="monster, demon, old man, robot..." autocorrect="off" enterkeyhint="search"><button type="button" id="libgo">Search</button></div>
+<div class="lib"><select id="libgender" style="flex:1"><option value="">Any gender</option><option value="male">Male</option><option value="female">Female</option><option value="neutral">Neutral</option></select><select id="libfor" style="flex:1"></select></div>
+<div id="libres"></div>
+<div class="file" id="libstat"></div>
 <label>Clone a voice from audio</label>
 <div class="warn" style="margin:0 0 8px">Upload recordings of ONE person speaking (MP3, M4A or WAV). About a minute or more of clean speech works best; music or other voices in the background make it worse. Only clone a voice you have the right to use.</div>
 <input type="text" id="clname" placeholder="Name for the new voice, e.g. Old Man" autocorrect="off">
@@ -530,7 +542,7 @@ var idb={
 var voices;
 try{voices=JSON.parse(ls("voices")||"null")}catch(e){voices=null}
 if(!voices||!voices.length)voices=DEFAULT_VOICES.map(function(v){return{name:v.name,id:v.id}});
-function saveVoices(){ls("voices",JSON.stringify(voices))}
+function saveVoices(){ls("voices",JSON.stringify(voices));if(window.__rlf)window.__rlf()}
 var voiceList=[];
 try{voiceList=JSON.parse(ls("voicelist")||"[]")}catch(e){voiceList=[]}
 function shortName(n){return (n||"").split(/\s+[-–—]\s+/)[0].trim()}
@@ -599,6 +611,69 @@ async function loadVoices(silent){
   }catch(e){$("vstat").textContent="Could not load voices: "+e.message}
 }
 $("loadv").onclick=function(){loadVoices(false)};
+/* ---- Voice Library search ---- */
+var libPage=0,libQuery="";
+function renderLibFor(){
+  var sel=$("libfor"),cur=sel.value;sel.innerHTML="";
+  var o=document.createElement("option");o.value="";o.textContent="Use for: new character";sel.appendChild(o);
+  voices.forEach(function(v,i){if(!(v.name||"").trim())return;var q=document.createElement("option");q.value=String(i);q.textContent="Use for: "+v.name.trim();sel.appendChild(q)});
+  sel.value=cur&&sel.querySelector('option[value="'+cur+'"]')?cur:"";
+}
+function playPreview(url){try{if(window.__pv)window.__pv.pause();var a=window.__pv=new Audio(url);a.play().catch(function(){$("libstat").textContent="Couldn't play that sample."})}catch(e){}}
+async function libSearch(more){
+  var key=$("key").value.trim();if(!key){$("libstat").textContent="Enter your ElevenLabs API key at the top first.";return}
+  var q=$("libq").value.trim();
+  if(!more){libPage=0;libQuery=q;$("libres").innerHTML=""}else libPage++;
+  $("libstat").textContent="Searching...";
+  try{
+    var url="https://api.elevenlabs.io/v1/shared-voices?page_size=20&sort=cloned_by_count&page="+libPage+(libQuery?"&search="+encodeURIComponent(libQuery):"")+($("libgender").value?"&gender="+$("libgender").value:"");
+    var res=await fetch(url,{headers:{"xi-api-key":key}}),txt=await res.text(),j=null;try{j=JSON.parse(txt)}catch(e){}
+    if(!res.ok)throw new Error(explain(res.status,txt));
+    var list=(j&&j.voices)||[],box=$("libres");
+    var old=$("libmore");if(old)old.remove();
+    list.forEach(function(v){
+      var d=document.createElement("div");d.className="vres";
+      var t=document.createElement("b");t.textContent=v.name||"Untitled";d.appendChild(t);
+      var info=document.createElement("div");info.className="d";
+      info.textContent=[v.gender,v.age&&String(v.age).replace("_"," "),v.accent,v.use_case&&String(v.use_case).replace("_"," ")].filter(Boolean).join(" · ")+(v.description?" — "+String(v.description).slice(0,140):"");
+      d.appendChild(info);
+      var acts=document.createElement("div");acts.className="acts";
+      var pb=document.createElement("button");pb.type="button";pb.textContent="▶ Play";pb.disabled=!v.preview_url;pb.onclick=function(){playPreview(v.preview_url)};
+      var ub=document.createElement("button");ub.type="button";ub.className="use";ub.textContent="Use";
+      ub.onclick=function(){libUse(v,ub)};
+      acts.appendChild(pb);acts.appendChild(ub);d.appendChild(acts);box.appendChild(d);
+    });
+    var total=(j&&j.total_count)||0,shown=box.querySelectorAll(".vres").length;
+    $("libstat").textContent=shown?("Showing "+shown+(total?" of "+total:"")+" voices."):("No voices found for \""+libQuery+"\". Try broader words like monster, demon, alien, deep, villain, old man.");
+    if(j&&j.has_more){var mb=document.createElement("button");mb.type="button";mb.id="libmore";mb.className="small";mb.style.marginTop="8px";mb.textContent="More results";mb.onclick=function(){libSearch(true)};box.appendChild(mb)}
+  }catch(e){$("libstat").textContent="Search failed: "+(e.message||e)}
+}
+async function libUse(v,btn){
+  var key=$("key").value.trim();if(!key)return;
+  btn.disabled=true;btn.textContent="Adding...";
+  try{
+    var have=voiceList.filter(function(q){return q.id===v.voice_id})[0],vid=v.voice_id;
+    if(!have){
+      var res=await fetch("https://api.elevenlabs.io/v1/voices/add/"+encodeURIComponent(v.public_owner_id)+"/"+encodeURIComponent(v.voice_id),{method:"POST",headers:{"xi-api-key":key,"Content-Type":"application/json"},body:JSON.stringify({new_name:v.name||"Library voice"})});
+      var txt=await res.text(),j=null;try{j=JSON.parse(txt)}catch(e){}
+      if(!res.ok){
+        if(/voice_limit_reached|maximum amount of custom voices|voice limit/i.test(txt))throw new Error("Your account is at its voice limit. Delete a voice in ElevenLabs → My Voices, then try again.");
+        if(/free_users_not_allowed|subscription|upgrade/i.test(txt))throw new Error("This voice needs a paid ElevenLabs plan.");
+        throw new Error(explain(res.status,txt));
+      }
+      vid=(j&&j.voice_id)||v.voice_id;
+    }
+    var target=$("libfor").value,label;
+    if(target!==""&&voices[+target]){voices[+target].id=vid;label=voices[+target].name.trim()}
+    else{label=shortName(v.name||"VOICE").toUpperCase().replace(/[^A-Z0-9 ]/g,"").trim().slice(0,24)||"VOICE";var ex=voices.filter(function(q){return (q.name||"").trim().toUpperCase()===label})[0];if(ex)ex.id=vid;else voices.push({name:label,id:vid})}
+    saveVoices();await loadVoices(true);renderVoices();renderLibFor();
+    btn.textContent="✓ Added";
+    $("libstat").textContent="Added \""+v.name+"\" as "+label+". Start lines with "+label+": in your script.";
+  }catch(e){btn.disabled=false;btn.textContent="Use";$("libstat").textContent=e.message||String(e)}
+}
+$("libgo").onclick=function(){libSearch(false)};
+$("libq").onkeydown=function(e){if(e.key==="Enter"){e.preventDefault();libSearch(false)}};
+renderLibFor();window.__rlf=renderLibFor;
 /* ---- instant voice clone ---- */
 var cloneFiles=[];
 $("clpick").onclick=function(){$("clfiles").click()};
